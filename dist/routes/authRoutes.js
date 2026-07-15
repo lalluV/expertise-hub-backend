@@ -1,0 +1,21 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const authController_1 = require("../controllers/authController");
+const savedExpertController_1 = require("../controllers/savedExpertController");
+const auth_1 = require("../middleware/auth");
+const upload_1 = require("../middleware/upload");
+const router = express_1.default.Router();
+router.post("/otp/send", authController_1.sendOtp);
+router.post("/otp/verify", authController_1.verifyOtp);
+router.post("/register", authController_1.registerUser);
+router.post("/login", authController_1.loginUser);
+router.get("/profile", auth_1.protect, authController_1.getUserProfile);
+router.patch("/profile", auth_1.protect, authController_1.updateUserProfile);
+router.get("/saved-experts", auth_1.protect, savedExpertController_1.getSavedExperts);
+router.post("/saved-experts/:expertId", auth_1.protect, savedExpertController_1.toggleSavedExpert);
+router.post("/avatar", auth_1.protect, upload_1.upload.single("avatar"), authController_1.uploadAvatar);
+exports.default = router;

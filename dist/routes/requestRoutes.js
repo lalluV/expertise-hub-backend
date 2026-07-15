@@ -1,0 +1,22 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const requestController_1 = require("../controllers/requestController");
+const auth_1 = require("../middleware/auth");
+const User_1 = require("../models/User");
+const upload_1 = require("../middleware/upload");
+const validate_1 = require("../middleware/validate");
+const marketplaceSchemas_1 = require("../validation/marketplaceSchemas");
+const router = express_1.default.Router();
+router.post("/", auth_1.protect, (0, auth_1.authorize)(User_1.UserRole.CUSTOMER), upload_1.upload.array("attachments", 5), (0, validate_1.validateBody)(marketplaceSchemas_1.createRequestSchema), requestController_1.createRequest);
+router.get("/", auth_1.protect, requestController_1.getRequests);
+router.get("/:id", auth_1.protect, requestController_1.getRequestById);
+router.patch("/:id/status", auth_1.protect, (0, auth_1.authorize)(User_1.UserRole.ADMIN), requestController_1.updateRequestStatus);
+router.patch("/:id/expert", auth_1.protect, (0, auth_1.authorize)(User_1.UserRole.ADMIN), (0, validate_1.validateBody)(marketplaceSchemas_1.assignExpertSchema), requestController_1.assignExpertToRequest);
+router.patch("/:id/respond", auth_1.protect, (0, auth_1.authorize)(User_1.UserRole.EXPERT), (0, validate_1.validateBody)(marketplaceSchemas_1.expertRespondRequestSchema), requestController_1.expertRespondToRequest);
+router.patch("/:id/schedule", auth_1.protect, (0, validate_1.validateBody)(marketplaceSchemas_1.rescheduleRequestSchema), requestController_1.rescheduleRequest);
+router.post("/:id/review", auth_1.protect, (0, auth_1.authorize)(User_1.UserRole.CUSTOMER), (0, validate_1.validateBody)(marketplaceSchemas_1.submitRequestReviewSchema), requestController_1.submitRequestReview);
+exports.default = router;
