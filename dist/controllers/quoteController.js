@@ -4,24 +4,20 @@ exports.getQuotes = exports.getQuoteById = exports.updateQuoteStatus = exports.c
 const Request_1 = require("../models/Request");
 const marketplaceService_1 = require("../services/marketplaceService");
 const quoteResponse_1 = require("../utils/quoteResponse");
-const requestPopulate = [
-    { path: "customer", select: "name phone email avatarUri" },
-    {
-        path: "expert",
-        select: "name phone headline avatarUri categories experience rating available",
-    },
-];
+const populate_1 = require("../utils/populate");
 // @desc    Create a quote (Admin) — stored on the request document
 // @route   POST /api/quotes
 // @access  Private/Admin
 const createQuote = async (req, res) => {
-    const { requestId, basePrice, commission, notes } = req.body;
+    const { requestId, basePrice, commission, taxPercent, advancePercent, notes } = req.body;
     const quote = await (0, marketplaceService_1.createManagedQuote)({
         requestId,
         basePrice,
         commission,
+        taxPercent,
+        advancePercent,
         notes,
-    });
+    }, req.user);
     res.status(201).json(quote);
 };
 exports.createQuote = createQuote;
@@ -30,7 +26,7 @@ exports.createQuote = createQuote;
 // @access  Private/Customer
 const updateQuoteStatus = async (req, res) => {
     const nextStatus = req.body.status;
-    const quote = await (0, marketplaceService_1.setQuoteDecision)(String(req.params.id), nextStatus);
+    const quote = await (0, marketplaceService_1.setQuoteDecision)(String(req.params.id), nextStatus, req.user);
     res.json(quote);
 };
 exports.updateQuoteStatus = updateQuoteStatus;
@@ -41,12 +37,12 @@ const getQuoteById = async (req, res) => {
     const request = await Request_1.RequestModel.findOne({
         _id: req.params.id,
         quote: { $exists: true },
-    }).populate(requestPopulate);
+    }).populate(populate_1.requestPopulate);
     if (!request) {
         res.status(404).json({ message: "Quote not found" });
         return;
     }
-    const quote = (0, quoteResponse_1.toQuoteApiResponse)(request);
+    const quote = (0, quoteResponse_1.toQuoteApiResponse)(request, req.user);
     if (!quote) {
         res.status(404).json({ message: "Quote not found" });
         return;
@@ -66,9 +62,9 @@ exports.getQuoteById = getQuoteById;
 // @route   GET /api/quotes
 // @access  Private
 const getQuotes = async (req, res) => {
-    const requests = await Request_1.RequestModel.find({ quote: { $exists: true } }).populate(requestPopulate);
+    const requests = await Request_1.RequestModel.find({ quote: { $exists: true } }).populate(populate_1.requestPopulate);
     const quotes = requests
-        .map((request) => (0, quoteResponse_1.toQuoteApiResponse)(request))
+        .map((request) => (0, quoteResponse_1.toQuoteApiResponse)(request, req.user))
         .filter((quote) => Boolean(quote));
     const filteredQuotes = req.user.role === "customer"
         ? quotes.filter((q) => {

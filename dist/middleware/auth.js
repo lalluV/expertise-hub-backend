@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.authorize = exports.protect = void 0;
+exports.optionalAuth = exports.authorize = exports.protect = void 0;
 const jwt_1 = require("../utils/jwt");
 const User_1 = require("../models/User");
 const ExpertProfile_1 = require("../models/ExpertProfile");
@@ -18,6 +18,11 @@ const protect = async (req, res, next) => {
                         .status(401)
                         .json({ message: "Not authorized, expert profile not found" });
                 }
+                if (!(0, jwt_1.tokenVersionMatches)(decoded, expert)) {
+                    return res
+                        .status(401)
+                        .json({ message: "Session expired, please sign in again" });
+                }
                 req.user = { ...expert.toObject(), role: User_1.UserRole.EXPERT };
             }
             else {
@@ -27,11 +32,15 @@ const protect = async (req, res, next) => {
                         .status(401)
                         .json({ message: "Not authorized, user not found" });
                 }
+                if (!(0, jwt_1.tokenVersionMatches)(decoded, req.user)) {
+                    return res
+                        .status(401)
+                        .json({ message: "Session expired, please sign in again" });
+                }
             }
-            next();
+            return next();
         }
-        catch (error) {
-            console.error(error);
+        catch {
             return res.status(401).json({ message: "Not authorized, token failed" });
         }
     }
@@ -51,3 +60,31 @@ const authorize = (...roles) => {
     };
 };
 exports.authorize = authorize;
+/**
+ * Like `protect`, but never rejects: sets req.user when a valid Bearer token
+ * is present and continues anonymously otherwise. Used by public endpoints
+ * that shape output per viewer (e.g. expert name privacy).
+ */
+const optionalAuth = async (req, _res, next) => {
+    try {
+        const header = req.headers.authorization;
+        if (header && header.startsWith("Bearer")) {
+            const decoded = (0, jwt_1.verifyToken)(header.split(" ")[1]);
+            if (decoded.role === User_1.UserRole.EXPERT) {
+                const expert = await ExpertProfile_1.ExpertProfile.findById(decoded.id);
+                if (expert && (0, jwt_1.tokenVersionMatches)(decoded, expert))
+                    req.user = { ...expert.toObject(), role: User_1.UserRole.EXPERT };
+            }
+            else {
+                const user = await User_1.User.findById(decoded.id).select("-password");
+                if (user && (0, jwt_1.tokenVersionMatches)(decoded, user))
+                    req.user = user;
+            }
+        }
+    }
+    catch {
+        // ignore invalid tokens on public routes
+    }
+    next();
+};
+exports.optionalAuth = optionalAuth;

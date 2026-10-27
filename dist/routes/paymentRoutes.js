@@ -11,6 +11,8 @@ const validate_1 = require("../middleware/validate");
 const marketplaceSchemas_1 = require("../validation/marketplaceSchemas");
 const router = express_1.default.Router();
 router.get("/", auth_1.protect, paymentController_1.getPayments);
+router.get("/analytics", auth_1.protect, (0, auth_1.authorize)(User_1.UserRole.ADMIN), paymentController_1.getRevenueAnalytics);
+router.get("/summary/:requestId", auth_1.protect, paymentController_1.getPaymentSummary);
 router.post("/", auth_1.protect, (0, auth_1.authorize)(User_1.UserRole.CUSTOMER), (0, validate_1.validateBody)(marketplaceSchemas_1.processPaymentSchema), paymentController_1.processPayment);
 router.post("/process", auth_1.protect, (0, auth_1.authorize)(User_1.UserRole.CUSTOMER), (0, validate_1.validateBody)(marketplaceSchemas_1.processPaymentSchema), paymentController_1.processPayment);
 exports.default = router;

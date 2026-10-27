@@ -8,6 +8,6 @@ const uploadController_1 = require("../controllers/uploadController");
 const auth_1 = require("../middleware/auth");
 const upload_1 = require("../middleware/upload");
 const router = express_1.default.Router();
-router.post("/image", auth_1.protect, upload_1.upload.single("file"), uploadController_1.uploadImage);
-router.post("/images", auth_1.protect, upload_1.upload.array("files", 10), uploadController_1.uploadImages);
+router.post("/image", auth_1.protect, upload_1.upload.single("file"), upload_1.verifyUploadContent, uploadController_1.uploadImage);
+router.post("/images", auth_1.protect, upload_1.upload.array("files", 10), upload_1.verifyUploadContent, uploadController_1.uploadImages);
 exports.default = router;

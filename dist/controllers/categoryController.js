@@ -1,7 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteCategory = exports.updateCategory = exports.createCategory = exports.getCategories = exports.getPublicCategories = void 0;
+exports.getCustomCategoryEntries = exports.deleteCategory = exports.updateCategory = exports.createCategory = exports.getCategories = exports.getPublicCategories = void 0;
 const Category_1 = require("../models/Category");
+const Request_1 = require("../models/Request");
+const ExpertProfile_1 = require("../models/ExpertProfile");
+const marketplaceSchemas_1 = require("../validation/marketplaceSchemas");
 const categoryService_1 = require("../services/categoryService");
 // @desc    Get active service categories (public)
 // @route   GET /api/categories/public
@@ -76,3 +79,44 @@ const deleteCategory = async (req, res) => {
     res.json({ message: "Category deleted" });
 };
 exports.deleteCategory = deleteCategory;
+// @desc    Custom "Other" category/skill entries entered by customers and experts
+// @route   GET /api/categories/custom-entries
+// @access  Private/Admin
+const getCustomCategoryEntries = async (_req, res) => {
+    const [requests, experts] = await Promise.all([
+        Request_1.RequestModel.find({
+            category: marketplaceSchemas_1.OTHER_CATEGORY,
+            customCategory: { $exists: true, $ne: "" },
+        })
+            .populate("customer", "name email")
+            .sort({ createdAt: -1 }),
+        ExpertProfile_1.ExpertProfile.find({
+            customCategory: { $exists: true, $ne: "" },
+        }).sort({ updatedAt: -1 }),
+    ]);
+    const entries = [
+        ...requests.map((r) => ({
+            source: "request",
+            id: String(r._id),
+            customCategory: r.customCategory,
+            requestStatus: r.status,
+            submittedBy: r.customer
+                ? {
+                    _id: String(r.customer._id),
+                    name: r.customer.name,
+                    email: r.customer.email,
+                }
+                : null,
+            createdAt: r.createdAt,
+        })),
+        ...experts.map((e) => ({
+            source: "expert",
+            id: String(e._id),
+            customCategory: e.customCategory,
+            submittedBy: { _id: String(e._id), name: e.name, email: e.email },
+            createdAt: e.createdAt,
+        })),
+    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    res.json(entries);
+};
+exports.getCustomCategoryEntries = getCustomCategoryEntries;

@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Payment = exports.PaymentStatus = void 0;
+exports.Payment = exports.PaymentType = exports.PaymentStatus = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
 var PaymentStatus;
 (function (PaymentStatus) {
@@ -41,10 +41,24 @@ var PaymentStatus;
     PaymentStatus["SUCCESS"] = "success";
     PaymentStatus["FAILED"] = "failed";
 })(PaymentStatus || (exports.PaymentStatus = PaymentStatus = {}));
+var PaymentType;
+(function (PaymentType) {
+    PaymentType["ADVANCE"] = "advance";
+    PaymentType["FINAL"] = "final";
+})(PaymentType || (exports.PaymentType = PaymentType = {}));
 const PaymentSchema = new mongoose_1.Schema({
     request: { type: mongoose_1.Schema.Types.ObjectId, ref: "Request", required: true },
     customer: { type: mongoose_1.Schema.Types.ObjectId, ref: "User", required: true },
     amount: { type: Number, required: true },
+    taxPercent: { type: Number, default: 0, min: 0, max: 100 },
+    taxAmount: { type: Number, default: 0, min: 0 },
+    total: { type: Number },
+    type: {
+        type: String,
+        enum: Object.values(PaymentType),
+        default: PaymentType.FINAL,
+        required: true,
+    },
     status: {
         type: String,
         enum: Object.values(PaymentStatus),

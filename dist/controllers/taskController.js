@@ -5,20 +5,13 @@ const Request_1 = require("../models/Request");
 const User_1 = require("../models/User");
 const marketplaceService_1 = require("../services/marketplaceService");
 const taskResponse_1 = require("../utils/taskResponse");
-const taskPopulate = [
-    { path: "customer", select: "name phone email avatarUri" },
-    {
-        path: "expert",
-        select: "name phone headline avatarUri categories experience rating available",
-    },
-    { path: "task.expert", select: "name phone headline avatarUri" },
-];
+const populate_1 = require("../utils/populate");
 // @desc    Assign a task to an expert (stored on the request document)
 // @route   POST /api/tasks/assign
 // @access  Private/Admin
 const assignTask = async (req, res) => {
     const { requestId, expertId } = req.body;
-    const task = await (0, marketplaceService_1.assignManagedTask)({ requestId, expertId });
+    const task = await (0, marketplaceService_1.assignManagedTask)({ requestId, expertId }, req.user);
     res.status(201).json(task);
 };
 exports.assignTask = assignTask;
@@ -27,6 +20,12 @@ exports.assignTask = assignTask;
 // @access  Private/Expert, Admin
 const updateTaskStatus = async (req, res) => {
     const { status, notes } = req.body;
+    // Only an admin may mark work as completed; experts (and anyone else) get 403.
+    if (status === Request_1.TaskStatus.COMPLETED && req.user.role !== User_1.UserRole.ADMIN) {
+        return res.status(403).json({
+            message: "Only an admin can mark a task or request as completed",
+        });
+    }
     const request = await Request_1.RequestModel.findOne({
         _id: req.params.id,
         task: { $exists: true },
@@ -49,8 +48,8 @@ const updateTaskStatus = async (req, res) => {
     }
     request.markModified("task");
     await request.save();
-    const populated = await Request_1.RequestModel.findById(request._id).populate(taskPopulate);
-    const task = populated ? (0, taskResponse_1.toTaskApiResponse)(populated) : null;
+    const populated = await Request_1.RequestModel.findById(request._id).populate(populate_1.taskPopulate);
+    const task = populated ? (0, taskResponse_1.toTaskApiResponse)(populated, req.user) : null;
     res.json(task);
 };
 exports.updateTaskStatus = updateTaskStatus;
@@ -60,10 +59,12 @@ exports.updateTaskStatus = updateTaskStatus;
 const getTasks = async (req, res) => {
     const query = req.user.role === User_1.UserRole.EXPERT
         ? { task: { $exists: true }, "task.expert": req.user._id }
-        : { task: { $exists: true } };
-    const requests = await Request_1.RequestModel.find(query).populate(taskPopulate);
+        : req.user.role === User_1.UserRole.CUSTOMER
+            ? { task: { $exists: true }, customer: req.user._id }
+            : { task: { $exists: true } };
+    const requests = await Request_1.RequestModel.find(query).populate(populate_1.taskPopulate);
     const tasks = requests
-        .map((request) => (0, taskResponse_1.toTaskApiResponse)(request))
+        .map((request) => (0, taskResponse_1.toTaskApiResponse)(request, req.user))
         .filter((task) => Boolean(task));
     res.json(tasks);
 };

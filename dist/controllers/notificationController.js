@@ -4,6 +4,7 @@ exports.markNotificationRead = exports.markAllNotificationsRead = exports.getNot
 const Request_1 = require("../models/Request");
 const User_1 = require("../models/User");
 const ExpertProfile_1 = require("../models/ExpertProfile");
+const expertPrivacy_1 = require("../utils/expertPrivacy");
 const getGroup = (date) => {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -16,14 +17,19 @@ const getGroup = (date) => {
     return "earlier";
 };
 const formatTimeAgo = (date) => {
-    const diffMs = Date.now() - date.getTime();
-    const hours = Math.floor(diffMs / (1000 * 60 * 60));
-    if (hours < 1)
+    const diffMs = Math.max(0, Date.now() - date.getTime());
+    const minutes = Math.floor(diffMs / (1000 * 60));
+    if (minutes < 1)
         return "Just now";
+    if (minutes < 60)
+        return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
     if (hours < 24)
         return `${hours}h ago`;
     const days = Math.floor(hours / 24);
-    return `${days}d ago`;
+    if (days < 7)
+        return `${days}d ago`;
+    return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 };
 const parseCategory = (description) => {
     const match = description?.match(/^\[([^\]]+)\]/);
@@ -47,11 +53,11 @@ const getNotifications = async (req, res) => {
     const items = [];
     if (role === User_1.UserRole.CUSTOMER) {
         const requests = await Request_1.RequestModel.find({ customer: userId })
-            .populate("expert", "name")
+            .populate("expert", "name hideName displayName")
             .sort({ updatedAt: -1 });
         for (const request of requests) {
             const category = parseCategory(request.description);
-            const date = request.updatedAt || request.createdAt;
+            const created = request.createdAt;
             if (request.status === Request_1.RequestStatus.QUOTED &&
                 request.quote?.status === Request_1.QuoteStatus.PENDING) {
                 const quoteCreatedAt = request.quote.createdAt || request.updatedAt || request.createdAt;
@@ -60,7 +66,7 @@ const getNotifications = async (req, res) => {
                     group: getGroup(quoteCreatedAt),
                     audience: "customer",
                     title: `Quote Received: ${category}`,
-                    body: `A quote for your ${category} request is ready for review. Payment is arranged outside the app after acceptance.`,
+                    body: `A quote for your ${category} request is ready. Accept it to confirm, or decline it. Payment is arranged with our team, not in the app.`,
                     actionLabel: "Review Quote",
                     actionType: "review_quote",
                     actionIcon: "chevron-right",
@@ -76,12 +82,11 @@ const getNotifications = async (req, res) => {
             }
             if (request.status === Request_1.RequestStatus.ASSIGNED &&
                 request.expert) {
-                const expertName = typeof request.expert === "object" && "name" in request.expert
-                    ? request.expert.name
-                    : "Expert";
+                // Customer-facing: respect expert name privacy (displayName / initials)
+                const expertName = (0, expertPrivacy_1.publicExpertName)(request.expert);
                 items.push({
                     id: `assigned-${request._id}`,
-                    group: getGroup(date),
+                    group: getGroup(created),
                     audience: "customer",
                     title: `Expert Assigned: ${expertName}`,
                     body: `${expertName} has been assigned to your ${category}. Schedule your kickoff call.`,
@@ -91,16 +96,16 @@ const getNotifications = async (req, res) => {
                     icon: "how-to-reg",
                     iconBg: "#d1fae5",
                     iconColor: "#059669",
-                    timeAgo: formatTimeAgo(date),
+                    timeAgo: formatTimeAgo(created),
                     unread: !readIds.has(`assigned-${request._id}`),
                     requestId: String(request._id),
-                    createdAt: date.toISOString(),
+                    createdAt: created.toISOString(),
                 });
             }
             if (request.status === Request_1.RequestStatus.COMPLETED) {
                 items.push({
                     id: `completed-${request._id}`,
-                    group: getGroup(date),
+                    group: getGroup(created),
                     audience: "customer",
                     title: `Job Completed: ${category}`,
                     body: `Your ${category} has been marked as finished. Please rate your expert.`,
@@ -110,10 +115,10 @@ const getNotifications = async (req, res) => {
                     icon: "task-alt",
                     iconBg: "#dbeafe",
                     iconColor: "#2563eb",
-                    timeAgo: formatTimeAgo(date),
+                    timeAgo: formatTimeAgo(created),
                     unread: !readIds.has(`completed-${request._id}`),
                     requestId: String(request._id),
-                    createdAt: date.toISOString(),
+                    createdAt: created.toISOString(),
                 });
             }
         }
@@ -130,11 +135,12 @@ const getNotifications = async (req, res) => {
                 continue;
             const category = parseCategory(request.description);
             const taskStatus = request.task.status;
-            const date = request.task.updatedAt || request.updatedAt || request.createdAt;
+            const date = request.task.createdAt || request.createdAt;
             if (taskStatus === "assigned") {
+                const assignedAt = request.task.createdAt || request.createdAt;
                 items.push({
                     id: `task-${request._id}`,
-                    group: getGroup(request.task.createdAt || request.createdAt),
+                    group: getGroup(assignedAt),
                     audience: "expert",
                     title: `New Request: ${category}`,
                     body: `You've been assigned a ${category} engagement. Review the details and get started.`,
@@ -144,10 +150,11 @@ const getNotifications = async (req, res) => {
                     icon: "event-note",
                     iconBg: "rgba(0, 74, 198, 0.2)",
                     iconColor: "#004ac6",
+                    timeAgo: formatTimeAgo(assignedAt),
                     unread: !readIds.has(`task-${request._id}`),
                     taskId: String(request._id),
                     requestId: String(request._id),
-                    createdAt: (request.task.createdAt || request.createdAt).toISOString(),
+                    createdAt: assignedAt.toISOString(),
                 });
             }
             if (taskStatus === "completed") {
@@ -257,15 +264,19 @@ exports.markAllNotificationsRead = markAllNotificationsRead;
 // @desc    Mark a notification as read
 // @route   PATCH /api/notifications/:id/read
 // @access  Private
+const MAX_READ_IDS = 500;
+/** Keeps the read-id list bounded (ids are client-supplied). */
+const addReadId = (list, id) => [...new Set([...(list || []), id])].slice(-MAX_READ_IDS);
 const markNotificationRead = async (req, res) => {
+    if (typeof req.params.id !== "string" || req.params.id.length > 120) {
+        return res.status(400).json({ message: "Invalid notification id" });
+    }
     if (req.user.role === User_1.UserRole.EXPERT) {
         const expert = await ExpertProfile_1.ExpertProfile.findById(req.user._id);
         if (!expert) {
             return res.status(404).json({ message: "Expert profile not found" });
         }
-        const ids = new Set(expert.readNotificationIds || []);
-        ids.add(req.params.id);
-        expert.readNotificationIds = [...ids];
+        expert.readNotificationIds = addReadId(expert.readNotificationIds, req.params.id);
         await expert.save();
         return res.json({ success: true });
     }
@@ -273,9 +284,7 @@ const markNotificationRead = async (req, res) => {
     if (!user) {
         return res.status(404).json({ message: "User not found" });
     }
-    const ids = new Set(user.readNotificationIds || []);
-    ids.add(req.params.id);
-    user.readNotificationIds = [...ids];
+    user.readNotificationIds = addReadId(user.readNotificationIds, req.params.id);
     await user.save();
     res.json({ success: true });
 };

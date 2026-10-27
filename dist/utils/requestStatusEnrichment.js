@@ -2,12 +2,10 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.enrichRequestsWithStatus = enrichRequestsWithStatus;
 exports.enrichRequestWithStatus = enrichRequestWithStatus;
-function toPlain(doc) {
-    return typeof doc.toObject === "function" ? doc.toObject() : doc;
-}
-async function enrichRequestsWithStatus(requests) {
+const requestShape_1 = require("./requestShape");
+async function enrichRequestsWithStatus(requests, viewer) {
     return requests.map((request) => {
-        const plain = toPlain(request);
+        const plain = (0, requestShape_1.shapeRequestForViewer)(request, viewer);
         return {
             ...plain,
             taskStatus: plain.task?.status,
@@ -16,12 +14,16 @@ async function enrichRequestsWithStatus(requests) {
                     _id: String(plain._id),
                     status: plain.quote.status,
                     finalPrice: plain.quote.finalPrice,
+                    taxPercent: plain.quote.taxPercent,
+                    taxAmount: plain.quote.taxAmount,
+                    advancePercent: plain.quote.advancePercent,
+                    advanceAmount: plain.quote.advanceAmount,
                 }
                 : undefined,
         };
     });
 }
-async function enrichRequestWithStatus(request) {
-    const [enriched] = await enrichRequestsWithStatus([request]);
+async function enrichRequestWithStatus(request, viewer) {
+    const [enriched] = await enrichRequestsWithStatus([request], viewer);
     return enriched;
 }

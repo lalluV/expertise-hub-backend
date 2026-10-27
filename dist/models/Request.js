@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.RequestModel = exports.TaskStatus = exports.QuoteStatus = exports.RequestStatus = void 0;
+exports.RequestModel = exports.ReviewStatus = exports.TaskStatus = exports.QuoteStatus = exports.RequestStatus = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
 var RequestStatus;
 (function (RequestStatus) {
@@ -57,10 +57,20 @@ var TaskStatus;
     TaskStatus["IN_PROGRESS"] = "in_progress";
     TaskStatus["COMPLETED"] = "completed";
 })(TaskStatus || (exports.TaskStatus = TaskStatus = {}));
+var ReviewStatus;
+(function (ReviewStatus) {
+    ReviewStatus["PENDING"] = "pending";
+    ReviewStatus["APPROVED"] = "approved";
+    ReviewStatus["REJECTED"] = "rejected";
+})(ReviewStatus || (exports.ReviewStatus = ReviewStatus = {}));
 const QuoteEmbedSchema = new mongoose_1.Schema({
     basePrice: { type: Number, required: true },
     commission: { type: Number, required: true },
     finalPrice: { type: Number, required: true },
+    taxPercent: { type: Number, default: 0, min: 0, max: 100 },
+    taxAmount: { type: Number, default: 0, min: 0 },
+    advancePercent: { type: Number, default: 0, min: 0, max: 100 },
+    advanceAmount: { type: Number, default: 0, min: 0 },
     notes: { type: String, default: "" },
     status: {
         type: String,
@@ -87,11 +97,22 @@ const ReviewEmbedSchema = new mongoose_1.Schema({
     rating: { type: Number, required: true, min: 1, max: 5 },
     comment: { type: String, required: true, maxlength: 2000 },
     customerName: { type: String },
+    status: {
+        type: String,
+        enum: Object.values(ReviewStatus),
+        default: ReviewStatus.PENDING,
+    },
+    adminWritten: { type: Boolean, default: false },
+    reviewedAt: { type: Date },
+    reviewedBy: { type: mongoose_1.Schema.Types.ObjectId, ref: "User" },
+    rejectionReason: { type: String },
 }, { timestamps: { createdAt: true, updatedAt: false }, _id: false });
 const RequestSchema = new mongoose_1.Schema({
     customer: { type: mongoose_1.Schema.Types.ObjectId, ref: "User", required: true },
     expert: { type: mongoose_1.Schema.Types.ObjectId, ref: "ExpertProfile", required: false },
     description: { type: String, required: true },
+    category: { type: String, trim: true },
+    customCategory: { type: String, trim: true },
     attachments: [{ type: String }],
     status: {
         type: String,
@@ -104,5 +125,8 @@ const RequestSchema = new mongoose_1.Schema({
     quote: { type: QuoteEmbedSchema, required: false },
     task: { type: TaskEmbedSchema, required: false },
     review: { type: ReviewEmbedSchema, required: false },
+    cancelledAt: { type: Date },
+    cancelledBy: { type: String, enum: ["customer", "admin"] },
+    cancelReason: { type: String, maxlength: 500 },
 }, { timestamps: true, strict: true });
 exports.RequestModel = mongoose_1.default.model("Request", RequestSchema);

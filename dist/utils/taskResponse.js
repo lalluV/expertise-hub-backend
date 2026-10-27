@@ -1,10 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.toTaskApiResponse = toTaskApiResponse;
-function toTaskApiResponse(request) {
-    const plain = typeof request.toObject === "function"
-        ? request.toObject()
-        : { ...request };
+const requestShape_1 = require("./requestShape");
+function toTaskApiResponse(request, viewer) {
+    const plain = (0, requestShape_1.shapeRequestForViewer)(request, viewer);
     if (!plain.task)
         return null;
     const { task, ...requestFields } = plain;

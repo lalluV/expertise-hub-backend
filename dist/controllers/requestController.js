@@ -1,17 +1,22 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.submitRequestReview = exports.rescheduleRequest = exports.expertRespondToRequest = exports.getRequestById = exports.updateRequestStatus = exports.assignExpertToRequest = exports.getRequests = exports.createRequest = void 0;
+exports.submitRequestReview = exports.rescheduleRequest = exports.expertRespondToRequest = exports.getRequestById = exports.updateRequestStatus = exports.assignExpertToRequest = exports.deleteRequest = exports.cancelRequest = exports.updateRequest = exports.getRequests = exports.createRequest = void 0;
 const Request_1 = require("../models/Request");
 const ExpertProfile_1 = require("../models/ExpertProfile");
 const User_1 = require("../models/User");
 const requestStatusEnrichment_1 = require("../utils/requestStatusEnrichment");
 const expertProfileService_1 = require("../services/expertProfileService");
 const storageService_1 = require("../services/storageService");
+const populate_1 = require("../utils/populate");
+const requestShape_1 = require("../utils/requestShape");
+const marketplaceSchemas_1 = require("../validation/marketplaceSchemas");
+const Payment_1 = require("../models/Payment");
+const listQuery_1 = require("../utils/listQuery");
 // @desc    Create a new request
 // @route   POST /api/requests
 // @access  Private/Customer
 const createRequest = async (req, res) => {
-    const { description, attachments, expertId, scheduledDate, budget } = req.body;
+    const { description, attachments, expertId, scheduledDate, budget, category, customCategory, } = req.body;
     const uploadedFiles = req.files ?? [];
     const fileAttachments = uploadedFiles.length > 0
         ? await (0, storageService_1.uploadMulterFiles)(uploadedFiles, "requests")
@@ -28,12 +33,14 @@ const createRequest = async (req, res) => {
         customer: req.user._id,
         ...(assignedExpertId ? { expert: assignedExpertId } : {}),
         description,
+        ...(category ? { category } : {}),
+        ...(category === marketplaceSchemas_1.OTHER_CATEGORY && customCategory ? { customCategory } : {}),
         attachments: [...(attachments || []), ...fileAttachments],
         scheduledDate: scheduledDate || new Date(), // Fallback if not provided
         budget,
         status: Request_1.RequestStatus.PENDING,
     });
-    res.status(201).json(request);
+    res.status(201).json((0, requestShape_1.shapeRequestForViewer)(request, req.user));
 };
 exports.createRequest = createRequest;
 // @desc    Get requests
@@ -61,12 +68,142 @@ const getRequests = async (req, res) => {
         };
     }
     // Admin sees all, so query remains {}
-    const requests = await Request_1.RequestModel.find(query)
-        .populate("customer", "name phone email avatarUri")
-        .populate("expert", "name phone headline avatarUri categories experience rating available");
-    res.json(await (0, requestStatusEnrichment_1.enrichRequestsWithStatus)(requests));
+    // Optional server-side filters: ?status=a,b &category= &search= &page= &limit=
+    const filters = [query];
+    const status = (0, listQuery_1.queryString)(req.query.status);
+    if (status) {
+        const valid = status
+            .split(",")
+            .map((x) => x.trim())
+            .filter((x) => Object.values(Request_1.RequestStatus).includes(x));
+        filters.push({ status: { $in: valid } });
+    }
+    const category = (0, listQuery_1.queryString)(req.query.category);
+    if (category)
+        filters.push({ category });
+    const lq = (0, listQuery_1.parseListQuery)(req.query);
+    if (lq.search) {
+        const rx = new RegExp((0, listQuery_1.escapeRegex)(lq.search), "i");
+        filters.push({ $or: [{ description: rx }, { category: rx }, { customCategory: rx }] });
+    }
+    const requests = await Request_1.RequestModel.find(filters.length > 1 ? { $and: filters } : query)
+        .sort({ createdAt: -1 })
+        .populate(populate_1.requestPopulate);
+    const enriched = await (0, requestStatusEnrichment_1.enrichRequestsWithStatus)(requests, req.user);
+    res.json((0, listQuery_1.paginate)(res, enriched, lq));
 };
 exports.getRequests = getRequests;
+const EDITABLE_STATUSES = [Request_1.RequestStatus.PENDING, Request_1.RequestStatus.REVIEWED];
+const CANCELLABLE_STATUSES = [
+    Request_1.RequestStatus.PENDING,
+    Request_1.RequestStatus.REVIEWED,
+    Request_1.RequestStatus.QUOTED,
+    Request_1.RequestStatus.ACCEPTED,
+];
+const loadOwnRequest = async (req, res) => {
+    const request = await Request_1.RequestModel.findById(req.params.id);
+    if (!request) {
+        res.status(404).json({ message: "Request not found" });
+        return null;
+    }
+    if (String(request.customer) !== String(req.user._id)) {
+        res.status(403).json({ message: "Not authorized" });
+        return null;
+    }
+    return request;
+};
+// @desc    Edit own request (only before a quote is sent)
+// @route   PATCH /api/requests/:id
+// @access  Private/Customer
+const updateRequest = async (req, res) => {
+    const request = await loadOwnRequest(req, res);
+    if (!request)
+        return;
+    if (!EDITABLE_STATUSES.includes(request.status)) {
+        return res.status(400).json({
+            message: "This request can no longer be edited (a quote has been sent or it is closed)",
+        });
+    }
+    const { description, category, customCategory, scheduledDate, budget, attachments } = req.body;
+    if (description !== undefined)
+        request.description = description;
+    if (category !== undefined) {
+        request.category = category;
+        request.customCategory =
+            category === marketplaceSchemas_1.OTHER_CATEGORY ? customCategory || undefined : undefined;
+    }
+    else if (customCategory !== undefined && request.category === marketplaceSchemas_1.OTHER_CATEGORY) {
+        if (!customCategory) {
+            return res.status(400).json({ message: "customCategory is required when category is 'Other'" });
+        }
+        request.customCategory = customCategory;
+    }
+    if (scheduledDate !== undefined)
+        request.scheduledDate = new Date(scheduledDate);
+    if (budget !== undefined)
+        request.budget = budget;
+    if (attachments !== undefined)
+        request.attachments = attachments;
+    await request.save();
+    const populated = await Request_1.RequestModel.findById(request._id).populate(populate_1.requestPopulate);
+    res.json(populated ? (0, requestShape_1.shapeRequestForViewer)(populated, req.user) : populated);
+};
+exports.updateRequest = updateRequest;
+// @desc    Cancel own request (kept for history; status becomes "rejected")
+// @route   PATCH /api/requests/:id/cancel
+// @access  Private/Customer
+const cancelRequest = async (req, res) => {
+    const request = await loadOwnRequest(req, res);
+    if (!request)
+        return;
+    if (request.cancelledAt) {
+        return res.status(400).json({ message: "Request is already cancelled" });
+    }
+    if (!CANCELLABLE_STATUSES.includes(request.status)) {
+        return res.status(400).json({
+            message: "This request can no longer be cancelled. Please contact support.",
+        });
+    }
+    const paid = await Payment_1.Payment.countDocuments({ request: request._id });
+    if (paid > 0) {
+        return res.status(400).json({
+            message: "A payment was already made for this request. Please contact support to cancel.",
+        });
+    }
+    request.status = Request_1.RequestStatus.REJECTED;
+    request.cancelledAt = new Date();
+    request.cancelledBy = "customer";
+    request.cancelReason = req.body?.reason || undefined;
+    if (request.quote && request.quote.status === "pending") {
+        request.quote.status = "rejected";
+        request.markModified("quote");
+    }
+    await request.save();
+    const populated = await Request_1.RequestModel.findById(request._id).populate(populate_1.requestPopulate);
+    res.json(populated ? (0, requestShape_1.shapeRequestForViewer)(populated, req.user) : populated);
+};
+exports.cancelRequest = cancelRequest;
+// @desc    Delete own request (only while pending and unassigned)
+// @route   DELETE /api/requests/:id
+// @access  Private/Customer
+const deleteRequest = async (req, res) => {
+    const request = await loadOwnRequest(req, res);
+    if (!request)
+        return;
+    const cancelled = Boolean(request.cancelledAt);
+    if (!(request.status === Request_1.RequestStatus.PENDING && !request.expert) && !cancelled) {
+        return res.status(400).json({
+            message: "Only new, unassigned requests (or cancelled ones) can be deleted. Cancel it instead.",
+        });
+    }
+    const paid = await Payment_1.Payment.countDocuments({ request: request._id });
+    if (paid > 0) {
+        return res.status(400).json({ message: "Requests with payments cannot be deleted" });
+    }
+    await request.deleteOne();
+    res.json({ success: true, id: String(request._id) });
+};
+exports.deleteRequest = deleteRequest;
 // @desc    Assign expert to request (Admin)
 // @route   PATCH /api/requests/:id/expert
 // @access  Private/Admin
@@ -89,9 +226,8 @@ const assignExpertToRequest = async (req, res) => {
     }
     await request.save();
     const populated = await Request_1.RequestModel.findById(request._id)
-        .populate("customer", "name phone email avatarUri")
-        .populate("expert", "name phone headline avatarUri categories experience rating available");
-    res.json(populated);
+        .populate(populate_1.requestPopulate);
+    res.json(populated ? (0, requestShape_1.shapeRequestForViewer)(populated, req.user) : populated);
 };
 exports.assignExpertToRequest = assignExpertToRequest;
 // @desc    Update request status
@@ -103,9 +239,21 @@ const updateRequestStatus = async (req, res) => {
     if (!request) {
         return res.status(404).json({ message: "Request not found" });
     }
+    // Only admins reach this route (see requestRoutes); "completed" is
+    // admin-only by design. Keep the embedded task in sync when completing.
+    const role = req.user?.role;
+    if (status === Request_1.RequestStatus.COMPLETED && role !== User_1.UserRole.ADMIN) {
+        return res
+            .status(403)
+            .json({ message: "Only an admin can mark a request as completed" });
+    }
     request.status = status;
+    if (status === Request_1.RequestStatus.COMPLETED && request.task) {
+        request.task.status = Request_1.TaskStatus.COMPLETED;
+        request.markModified("task");
+    }
     const updatedRequest = await request.save();
-    res.json(updatedRequest);
+    res.json((0, requestShape_1.shapeRequestForViewer)(updatedRequest, req.user));
 };
 exports.updateRequestStatus = updateRequestStatus;
 // @desc    Get request by ID
@@ -126,14 +274,8 @@ const getRequestById = async (req, res) => {
             return res.status(403).json({ message: "Not authorized" });
         }
     }
-    await request.populate([
-        { path: "customer", select: "name phone email avatarUri" },
-        {
-            path: "expert",
-            select: "name phone headline avatarUri categories experience rating available",
-        },
-    ]);
-    res.json(await (0, requestStatusEnrichment_1.enrichRequestWithStatus)(request));
+    await request.populate(populate_1.requestPopulate);
+    res.json(await (0, requestStatusEnrichment_1.enrichRequestWithStatus)(request, req.user));
 };
 exports.getRequestById = getRequestById;
 const expertCanAccessRequest = async (requestId, expertId) => {
@@ -177,6 +319,14 @@ const expertRespondToRequest = async (req, res) => {
         declined.add(String(request._id));
         expert.declinedRequestIds = Array.from(declined);
         await expert.save();
+        // A customer may have addressed this request to this expert. Declining it
+        // releases it to the open pool instead of leaving it stuck on them.
+        if (request.expert &&
+            String(request.expert) === String(req.user._id) &&
+            request.status === Request_1.RequestStatus.PENDING) {
+            request.expert = undefined;
+            await request.save();
+        }
         return res.json({ success: true, action: "decline" });
     }
     if (request.expert && String(request.expert) !== String(req.user._id)) {
@@ -191,9 +341,12 @@ const expertRespondToRequest = async (req, res) => {
     }
     await request.save();
     const populated = await Request_1.RequestModel.findById(request._id)
-        .populate("customer", "name phone")
-        .populate("expert", "name phone headline avatarUri");
-    res.json({ success: true, action: "accept", request: populated });
+        .populate(populate_1.requestPopulate);
+    res.json({
+        success: true,
+        action: "accept",
+        request: populated ? (0, requestShape_1.shapeRequestForViewer)(populated, req.user) : populated,
+    });
 };
 exports.expertRespondToRequest = expertRespondToRequest;
 // @desc    Reschedule a request (expert or customer)
@@ -222,9 +375,8 @@ const rescheduleRequest = async (req, res) => {
     request.scheduledDate = new Date(scheduledDate);
     await request.save();
     const populated = await Request_1.RequestModel.findById(request._id)
-        .populate("customer", "name phone")
-        .populate("expert", "name phone headline avatarUri");
-    res.json(populated);
+        .populate(populate_1.requestPopulate);
+    res.json(populated ? (0, requestShape_1.shapeRequestForViewer)(populated, req.user) : populated);
 };
 exports.rescheduleRequest = rescheduleRequest;
 // @desc    Submit a review for a completed request
@@ -256,17 +408,15 @@ const submitRequestReview = async (req, res) => {
         rating,
         comment: comment.trim(),
         customerName: customer?.name,
+        status: Request_1.ReviewStatus.PENDING, // needs admin approval before it is public
+        adminWritten: false,
         createdAt: new Date(),
     };
     await request.save();
+    // Pending reviews do not count towards the rating; recalculating keeps the
+    // stored rating consistent (approved-only).
     await (0, expertProfileService_1.recalculateExpertRating)(String(expertId));
-    await request.populate([
-        { path: "customer", select: "name phone email avatarUri" },
-        {
-            path: "expert",
-            select: "name phone headline avatarUri categories experience rating available",
-        },
-    ]);
-    res.json(await (0, requestStatusEnrichment_1.enrichRequestWithStatus)(request));
+    await request.populate(populate_1.requestPopulate);
+    res.json(await (0, requestStatusEnrichment_1.enrichRequestWithStatus)(request, req.user));
 };
 exports.submitRequestReview = submitRequestReview;

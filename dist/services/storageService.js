@@ -7,6 +7,7 @@ exports.resolveStoredAssetUrl = void 0;
 exports.uploadBuffer = uploadBuffer;
 exports.uploadMulterFile = uploadMulterFile;
 exports.uploadMulterFiles = uploadMulterFiles;
+const fs_1 = require("fs");
 const client_s3_1 = require("@aws-sdk/client-s3");
 const crypto_1 = __importDefault(require("crypto"));
 const promises_1 = __importDefault(require("fs/promises"));
@@ -42,7 +43,14 @@ const resolveStoredAssetUrl = (storedValue) => {
         return `${publicBase}/${key}`;
     }
     const normalized = storedValue.replace(/\\/g, "/").replace(/^\/+/, "");
+    // Local files live in <cwd>/uploads/<key> and are served at /uploads/<key>.
+    // Keys in the "uploads" folder therefore map to /uploads/uploads/<file>.
+    // Legacy values stored as "uploads/<file>" (file directly in ./uploads)
+    // are still honoured when that file exists.
     if (normalized.startsWith("uploads/")) {
+        const nested = path_1.default.join(process.cwd(), "uploads", normalized);
+        if ((0, fs_1.existsSync)(nested))
+            return `/uploads/${normalized}`;
         return `/${normalized}`;
     }
     return `/uploads/${normalized}`;

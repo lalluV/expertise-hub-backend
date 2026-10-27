@@ -35,20 +35,50 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ExpertProfile = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
+function stripSecrets(_doc, ret) {
+    delete ret.password;
+    return ret;
+}
+const WorkHistorySchema = new mongoose_1.Schema({
+    company: { type: String, required: true, trim: true },
+    role: { type: String, required: true, trim: true },
+    startYear: { type: Number, required: true },
+    endYear: { type: Number, default: null },
+    description: { type: String, default: "" },
+}, { _id: false });
 const ExpertProfileSchema = new mongoose_1.Schema({
     name: { type: String, required: true },
-    phone: { type: String, required: true, unique: true },
-    email: { type: String, sparse: true },
+    phone: { type: String, unique: true, sparse: true },
+    email: {
+        type: String,
+        unique: true,
+        sparse: true,
+        lowercase: true,
+        trim: true,
+    },
+    password: { type: String }, // bcrypt hash
     avatarUri: { type: String },
     headline: { type: String },
     location: { type: String },
     categories: [{ type: String }],
+    customCategory: { type: String, trim: true },
     experience: { type: Number, default: 0 },
+    rate: { type: Number, min: 0 },
     rating: { type: Number, default: 0 },
     bio: { type: String, default: "" },
+    hideName: { type: Boolean, default: false },
+    displayName: { type: String, trim: true },
+    workHistory: { type: [WorkHistorySchema], default: [] },
     available: { type: Boolean, default: true },
     profileComplete: { type: Boolean, default: false },
     readNotificationIds: [{ type: String }],
     declinedRequestIds: [{ type: String }],
-}, { timestamps: true, strict: true });
+    tokenVersion: { type: Number, default: 0 },
+    googleId: { type: String, unique: true, sparse: true },
+}, {
+    timestamps: true,
+    strict: true,
+    toJSON: { transform: stripSecrets },
+    toObject: { transform: stripSecrets },
+});
 exports.ExpertProfile = mongoose_1.default.model("ExpertProfile", ExpertProfileSchema);

@@ -41,11 +41,23 @@ var UserRole;
     UserRole["EXPERT"] = "expert";
     UserRole["ADMIN"] = "admin";
 })(UserRole || (exports.UserRole = UserRole = {}));
+function stripSecrets(_doc, ret) {
+    delete ret.password;
+    return ret;
+}
 const UserSchema = new mongoose_1.Schema({
     name: { type: String, required: true },
-    phone: { type: String, required: true, unique: true },
-    email: { type: String, unique: true, sparse: true },
-    password: { type: String }, // Optional since OTP flow might not use password
+    // Phone is optional now (email + password is the primary login). Kept for
+    // legacy admin phone+password login and admin-managed records.
+    phone: { type: String, unique: true, sparse: true },
+    email: {
+        type: String,
+        unique: true,
+        sparse: true,
+        lowercase: true,
+        trim: true,
+    },
+    password: { type: String }, // bcrypt hash
     role: {
         type: String,
         enum: Object.values(UserRole),
@@ -60,6 +72,13 @@ const UserSchema = new mongoose_1.Schema({
     profileComplete: { type: Boolean, default: false },
     readNotificationIds: [{ type: String }],
     declinedRequestIds: [{ type: String }],
+    tokenVersion: { type: Number, default: 0 },
+    googleId: { type: String, unique: true, sparse: true },
     savedExpertIds: [{ type: mongoose_1.Schema.Types.ObjectId, ref: "ExpertProfile" }],
-}, { timestamps: true, strict: true });
+}, {
+    timestamps: true,
+    strict: true,
+    toJSON: { transform: stripSecrets },
+    toObject: { transform: stripSecrets },
+});
 exports.User = mongoose_1.default.model("User", UserSchema);
